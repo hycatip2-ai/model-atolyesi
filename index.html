@@ -224,6 +224,11 @@ nav.tabs button[aria-current="page"] svg { stroke-width: 2.2; }
 .sinfo { display: grid; grid-template-columns: 56px 1fr; gap: 14px; align-items: start; }
 .sinfo .tile { width: 56px; height: 56px; font-size: 28px; border-radius: 15px; }
 .sinfo .body { display: grid; gap: 6px; min-width: 0; }
+.kv { display: grid; grid-template-columns: minmax(96px, auto) 1fr; gap: 8px 14px; margin: 0; padding: 0 16px 14px; font-size: 13.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.readme { padding: 0 16px 16px; font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); display: grid; gap: 6px; }
+.readme b { color: var(--ink); }
 .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .steps div { background: var(--sunken); border-radius: var(--r-md); padding: 8px 10px; font-size: 12.5px; line-height: 1.35; display: grid; gap: 2px; }
 .steps b { font: 600 11px var(--font-mono); color: var(--accent); }
@@ -459,6 +464,10 @@ details.adv .field { background: var(--bg); }
         <label class="switch"><input type="checkbox" id="optZero" aria-label="Sadece ZeroGPU"><span></span></label>
       </div>
       <div class="setrow">
+        <div class="lt"><b>Sadece kota harcamayanlar</b><span class="small muted">Yalnızca CPU'da ya da sahibinin ödediği GPU'da çalışan Space'ler görünür. Kotanız bittiğinde işe yarar. Bunu açınca "Sadece ZeroGPU" kapanır.</span></div>
+        <label class="switch"><input type="checkbox" id="optFree" aria-label="Sadece kota harcamayanlar"><span></span></label>
+      </div>
+      <div class="setrow">
         <div class="lt"><b>Kapalı Space'leri gizle</b><span class="small muted">Hata veren, durdurulmuş ya da duraklatılmış Space'ler listede görünmez.</span></div>
         <label class="switch"><input type="checkbox" id="optHideErr" aria-label="Kapalıları gizle"><span></span></label>
       </div>
@@ -608,7 +617,7 @@ function mountInfo(btnSlot, tipSlot, content, label) {
 /* =========================================================
    Ayarlar ve hesap
    ========================================================= */
-const settings = Object.assign({ zeroOnly: true, hideErr: true, onboard: true }, store.get("settings", {}));
+const settings = Object.assign({ zeroOnly: true, freeOnly: false, hideErr: true, onboard: true }, store.get("settings", {}));
 const token = () => store.get("token", "");
 let account = store.get("account", null);
 
@@ -675,13 +684,14 @@ const isBroken = (s) => /ERROR|PAUSED|STOPPED|NO_APP_FILE|CONFIG_ERROR/.test(s.s
 function keep(s) {
   if (s.sdk && s.sdk !== "gradio") return false;
   if (settings.zeroOnly && !isZero(s)) return false;
+  if (settings.freeOnly && (isZero(s) || !s.hw)) return false;
   if (settings.hideErr && isBroken(s)) return false;
   return true;
 }
 function hwInfo(s) {
   if (isZero(s)) return { label: "ZeroGPU", cls: "zero", text: "Paylaşımlı ücretsiz GPU'da çalışır. Hızlıdır ama her çalıştırma günlük GPU kotanızdan süre düşer." };
   if (!s.hw) return { label: "Donanım bilinmiyor", cls: "", text: "Hugging Face bu Space'in donanımını bildirmedi. Çalıştırmayı deneyebilirsiniz." };
-  if (/cpu/i.test(s.hw)) return { label: "CPU · kota yok", cls: "free", text: "İşlemci üzerinde çalışır. Kotanızdan hiçbir şey düşmez ama GPU'ya göre çok daha yavaştır." };
+  if (/cpu/i.test(s.hw)) return { label: "CPU · kota yok", cls: "free", text: "İşlemci üzerinde çalışır. Kotanızdan hiçbir şey düşmez ama GPU'ya göre çok daha yavaştır.", more: "Ücretsiz CPU Space'leri sık hata verir: 48 saat kullanılmayınca uyur (uyanması 1–2 dakika sürer), sahibi bakımı bırakınca kütüphaneler eskiyip bozulur ve büyük görsel/video modelleri CPU'nun belleğine sığmaz. Bu hatalar Space'ten kaynaklanır; telefonunuz, internetiniz ya da kotanızla ilgisi yoktur." };
   return { label: "GPU · sahibi ödüyor", cls: "free", text: "Space sahibinin kiraladığı özel GPU'da çalışır. Kotanızdan düşmez; sahibi kapatırsa erişilemez." };
 }
 
@@ -1017,10 +1027,13 @@ async function checkToken() {
 /* =========================================================
    Görünüm geçişi
    ========================================================= */
+// Liste ayarı değişince Keşfet'e dönüşte liste yeniden süzülür
+let listDirty = false;
 function show(view) {
   state.view = view;
   for (const v of ["discover", "favs", "history", "guide", "settings"]) $("#view-" + v).hidden = v !== view;
   document.querySelectorAll("nav.tabs button").forEach((b) => (b.dataset.view === view ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
+  if (view === "discover" && listDirty) { listDirty = false; renderDiscover(); }
   if (view === "favs") renderFavs();
   if (view === "history") renderHistory();
   if (view === "guide") renderGuide();
@@ -1130,9 +1143,11 @@ function renderSpaceInfo(s) {
   const box = $("#rInfo");
   const hwTip = infoBtn([
     h("p", {}, h("b", {}, hi.label + ": "), hi.text),
+    hi.more ? h("p", {}, hi.more) : null,
     isZero(s) ? h("p", {}, "Space her çalıştırma için GPU'yu önceden belirli bir süreliğine ister (çoğunlukla 60 saniye). Kalan kotanız bu süreden azsa işlem başlamaz.") : null,
   ], null, "Donanım açıklaması");
   const aboutSlot = h("div");
+  const detailSlot = h("div");
   box.replaceChildren(
     h("div", { class: "sinfo" },
       tile(s),
@@ -1144,10 +1159,87 @@ function renderSpaceInfo(s) {
       ),
     ),
     hwTip.tip,
+    detailSlot,
     aboutSlot,
     h("div", { class: "row" }, h("a", { class: "btn sm", href: "https://huggingface.co/spaces/" + s.id, target: "_blank", rel: "noopener" }, "Hugging Face'te aç")),
   );
   r.aboutSlot = aboutSlot;
+  loadDetails(s, detailSlot);
+}
+
+const TASK_TR = {
+  "text-to-image": "Metinden görsel", "image-to-image": "Görselden görsel", "image-to-video": "Görselden video", "text-to-video": "Metinden video",
+  "text-to-speech": "Metinden ses", "automatic-speech-recognition": "Sesi yazıya dökme", "text-to-audio": "Metinden ses/müzik", "audio-to-audio": "Ses dönüştürme",
+  "text-generation": "Metin üretme / sohbet", "image-text-to-text": "Görseli anlama", "image-to-text": "Görselden metin", "image-segmentation": "Görsel bölütleme",
+  "object-detection": "Nesne bulma", "depth-estimation": "Derinlik çıkarma", "image-to-3d": "Görselden 3B", "text-to-3d": "Metinden 3B", "translation": "Çeviri",
+};
+const STAGE_TR = { RUNNING: "Çalışıyor", SLEEPING: "Uykuda (açınca uyanır)", BUILDING: "Kuruluyor", RUNTIME_ERROR: "Hata veriyor", BUILD_ERROR: "Kurulamadı (hata)", PAUSED: "Duraklatılmış", STOPPED: "Durdurulmuş", APP_STARTING: "Açılıyor", CONFIG_ERROR: "Ayar hatası" };
+function fmtDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso), days = Math.floor((Date.now() - d) / 86400000);
+  const rel = days < 1 ? "bugün" : days < 30 ? days + " gün önce" : days < 365 ? Math.round(days / 30) + " ay önce" : (days / 365).toFixed(1).replace(".0", "").replace(".", ",") + " yıl önce";
+  return d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" }) + " (" + rel + ")";
+}
+const fullNum = (n) => (n == null ? null : Number(n).toLocaleString("tr-TR"));
+function mdText(md) {
+  return stripTags(String(md || "")
+    .replace(/^---[\s\S]*?\n---\s*/, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/[*_`]{1,3}([^*_`\n]+)[*_`]{1,3}/g, "$1")
+    .replace(/^\s*\|.*\|\s*$/gm, ""));
+}
+async function getJSON(url) { const res = await fetch(url); return res.ok ? res.json() : null; }
+async function getText(url) { const res = await fetch(url); return res.ok ? res.text() : ""; }
+// Space ve kullandığı model hakkında: ne zaman çıktı, hangi görev, lisans, sahibinin açıklaması
+async function loadDetails(s, slot) {
+  slot.replaceChildren(h("p", { class: "small muted" }, "Ayrıntılar yükleniyor…"));
+  try {
+    const sp = await getJSON(API + "/spaces/" + s.id);
+    if (r.space !== s) return;
+    const models = (sp?.models || []).slice(0, 5);
+    const [mi, spReadme] = await Promise.all([
+      models[0] ? getJSON(API + "/models/" + models[0]).catch(() => null) : null,
+      getText("https://huggingface.co/spaces/" + s.id + "/resolve/main/README.md").catch(() => ""),
+    ]);
+    const mdReadme = models[0] ? await getText("https://huggingface.co/" + models[0] + "/resolve/main/README.md").catch(() => "") : "";
+    if (r.space !== s) return;
+    const mcd = mi?.cardData || {};
+    const task = mi?.pipeline_tag;
+    const base = [].concat(mcd.base_model || []).slice(0, 3);
+    const rows = [
+      ["Görev", task ? (TASK_TR[task] || task) + (TASK_TR[task] ? " (" + task + ")" : "") : null],
+      ["Kullandığı model", models.length ? h("span", {}, ...models.flatMap((m, i) => [i ? ", " : "", h("a", { href: "https://huggingface.co/" + m, target: "_blank", rel: "noopener", class: "mono" }, m)])) : "Space belirtmemiş"],
+      ["Temel aldığı", base.length ? base.join(", ") : null],
+      ["Model yayın tarihi", fmtDate(mi?.createdAt)],
+      ["Model güncelleme", fmtDate(mi?.lastModified)],
+      ["Model indirme", mi?.downloads != null ? fullNum(mi.downloads) + " (son 30 gün)" : null],
+      ["Lisans", mcd.license || sp?.cardData?.license || null],
+      ["Space açılışı", fmtDate(sp?.createdAt || s.created)],
+      ["Space güncelleme", fmtDate(sp?.lastModified)],
+      ["Beğeni", fullNum(sp?.likes ?? s.likes)],
+      ["Durum", STAGE_TR[sp?.runtime?.stage] || sp?.runtime?.stage || null],
+      ["Donanım", sp?.runtime?.hardware?.current || s.hw || null],
+    ].filter(([, v]) => v);
+    const spTxt = mdText(spReadme).slice(0, 1500);
+    const mdTxt = mdText(mdReadme).slice(0, 2500);
+    slot.replaceChildren(
+      h("details", { class: "adv", style: "background:var(--bg)" },
+        h("summary", {}, "Ayrıntılar", h("small", {}, [task && (TASK_TR[task] || task), mi?.createdAt && "çıkış: " + new Date(mi.createdAt).toLocaleDateString("tr-TR", { month: "long", year: "numeric" }), "dokunun"].filter(Boolean).join(" · ")), svg(ICONS.chev)),
+        h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
+      ),
+      mdTxt ? h("details", { class: "adv", style: "background:var(--bg)" },
+        h("summary", {}, "Model kartı", h("small", {}, "Modeli yapanların açıklaması (çoğunlukla İngilizce)"), svg(ICONS.chev)),
+        h("div", { class: "readme" }, mdTxt + (mdReadme.length > 2500 ? "…" : ""))) : null,
+      spTxt ? h("details", { class: "adv", style: "background:var(--bg)" },
+        h("summary", {}, "Space sayfası", h("small", {}, "Space sahibinin yazdığı tanıtım"), svg(ICONS.chev)),
+        h("div", { class: "readme" }, spTxt)) : null,
+    );
+  } catch {
+    if (r.space === s) slot.replaceChildren();
+  }
 }
 function renderAbout() {
   const cfg = r.app?.config || {};
@@ -1177,12 +1269,29 @@ async function openRunner(s, prefill) {
   $("#epWrap").hidden = true;
   $("#runbar").hidden = true;
   setStatus("connect");
+  let dead = null, lastSt = "", connected = false;
+  const showDead = (st) => {
+    if (r.space !== s || dead || connected) return;
+    dead = spaceDownText(st);
+    $("#rForm").replaceChildren();
+    setStatus("error", dead);
+  };
+  // Uyuyan ya da kurulan Space'i bekle; başka bir durumda 90 sn'de bağlanamazsa vazgeç
+  const guard = setTimeout(() => { if (!/sleeping|building/.test(lastSt)) showDead({ status: "timeout" }); }, 90000);
   try {
     const g = await loadGradio();
-    const opts = { events: ["data", "status"], status_callback: (st) => { if (r.space === s && st) setStatus("connect", spaceStatusText(st)); } };
+    const opts = { events: ["data", "status"], status_callback: (st) => {
+      if (r.space !== s || !st || dead) return;
+      lastSt = st.status || "";
+      // Space kapalıyken bağlantı hiç bitmeyebilir; beklemeden açıklamayı göster
+      if (/error|stopped|paused/.test(lastSt) || /ERROR|PAUSED|STOPPED/.test(st.detail || "")) showDead(st);
+      else setStatus("connect", spaceStatusText(st));
+    } };
     if (token()) opts.hf_token = token();
     const app = await g.Client.connect(s.id, opts);
-    if (r.space !== s) return;
+    clearTimeout(guard);
+    connected = true;
+    if (r.space !== s || dead) return;
     r.app = app;
     renderAbout();
     const api = await app.view_api();
@@ -1190,18 +1299,30 @@ async function openRunner(s, prefill) {
     const unnamed = Object.entries(api.unnamed_endpoints || {}).map(([k, v]) => [Number(k), v]);
     const eps = named.length ? named : unnamed;
     if (!eps.length) throw new Error("Bu Space dışarıdan kullanılabilecek bir işlev sunmuyor. Hugging Face'te açarak deneyin.");
-    eps.sort((a, b) => scoreEndpoint(String(b[0]), b[1]) - scoreEndpoint(String(a[0]), a[1]));
+    // Metinden görsel üreten Space'lerde, görsel zorunlu tutmayan işlev öne çıksın
+    const fileReq = (ep) => s.cat === "image" ? (ep.parameters || []).filter((p) => !p.parameter_has_default && FILE_COMPS.includes((p.component || "").toLowerCase())).length * 6 : 0;
+    eps.sort((a, b) => scoreEndpoint(String(b[0]), b[1]) - fileReq(b[1]) - (scoreEndpoint(String(a[0]), a[1]) - fileReq(a[1])));
     renderEndpoints(eps, prefill);
     hideStatus();
   } catch (e) {
+    clearTimeout(guard);
     if (r.space !== s) return;
     $("#rForm").replaceChildren();
-    setStatus("error", friendlyError(e));
+    setStatus("error", dead || friendlyError(e));
   }
 }
 function spaceStatusText(st) {
   const m = { sleeping: "Space uykudaydı, uyandırılıyor. Bu 1–2 dakika sürebilir.", building: "Space hazırlanıyor (kuruluyor). Birkaç dakika sürebilir.", running: "Space çalışıyor, bağlanılıyor…", error: "Space hata veriyor.", stopped: "Space sahibi tarafından durdurulmuş.", paused: "Space duraklatılmış." };
   return m[st.status] || st.message || "Bağlanılıyor…";
+}
+function spaceDownText(st) {
+  const detail = st.message || st.detail || "";
+  const stopped = /stopped/.test(st.status) || /STOPPED/.test(st.detail || ""), paused = /paused/.test(st.status) || /PAUSED/.test(st.detail || "");
+  const why = st.status === "timeout"
+    ? "Space 90 saniyedir yanıt vermiyor. Büyük olasılıkla çökmüş ya da aşırı yoğun. Sorun Space'in sahibinde; telefonunuz ya da kotanızla ilgisi yok."
+    : !stopped && !paused ? "Bu Space çökmüş ya da kodunda hata var. Sorun Space'in sahibinde; telefonunuz, internetiniz ya da kotanızla ilgisi yok. Ücretsiz CPU Space'lerinde sık görülür: sahibi bakımı bırakınca kütüphaneler eskiyip bozulur ya da model CPU'nun belleğine sığmaz."
+    : stopped ? "Space sahibi tarafından durdurulmuş. Sahibi yeniden açana kadar kullanılamaz." : "Space duraklatılmış. Sahibi yeniden başlatana kadar kullanılamaz.";
+  return why + "\nYapabilecekleriniz: listeden başka bir Space seçin ya da 'Hugging Face'te aç' ile sayfasına bakın; sahibi düzeltirse tekrar çalışır." + (detail && !/^(error|stopped|paused)$/i.test(detail) && !/experiencing an issue/i.test(detail) ? "\nAyrıntı: " + detail : "");
 }
 function closeRunner() {
   if (r.job) { try { r.job.cancel(); } catch {} r.job = null; }
@@ -1214,6 +1335,7 @@ function closeRunner() {
 
 function renderEndpoints(eps, prefill) {
   const wrap = $("#epWrap");
+  r.epCount = eps.length;
   const start = prefill?.endpoint != null ? eps.find(([k]) => String(k) === String(prefill.endpoint)) || eps[0] : eps[0];
   if (eps.length > 1) {
     const sel = h("select", { id: "epSelect" }, eps.map(([k], i) => h("option", { value: String(k) }, String(k) + (i === 0 ? "  (önerilen)" : ""))));
@@ -1290,8 +1412,10 @@ function fieldFor(p, i) {
   // Açıklama kutusu içeriği
   const tipParts = [];
   if (isFileComp) {
-    tipParts.push(h("p", {}, h("b", {}, "Neden dosya isteniyor? "), FILE_WHY[fileKindKey]));
-    tipParts.push(h("p", {}, required ? h("span", {}, h("b", {}, "Zorunlu: "), "dosya yüklemeden çalıştırırsanız Space büyük olasılıkla hata verir.") : h("span", {}, h("b", {}, "İsteğe bağlı: "), "yüklemeden de çalıştırabilirsiniz; bu durumda Space dosya olmadan ya da kendi örneğiyle çalışır.")));
+    const genRef = r.space?.cat === "image" && (fileKindKey === "image" || /photo|image|face|picture|img|pose|style/i.test(orig));
+    tipParts.push(h("p", {}, h("b", {}, "Neden dosya isteniyor? "), genRef ? "Bu Space metinden görsel üretiyor ama bu işlev ek olarak bir görsel istiyor. Bu genellikle 'referans görsel'dir: model stilini, yüzü ya da pozu bu görselden alır ya da görseli başlangıç noktası olarak kullanıp değiştirir." : FILE_WHY[fileKindKey]));
+    if (orig.split(/\s+/).length > 2) tipParts.push(h("p", {}, h("b", {}, "Space sahibinin notu: "), "alanın orijinal adı \u201c" + orig + "\u201d. Ne yüklemeniz gerektiğini çoğu zaman bu ad söyler."));
+    tipParts.push(h("p", {}, required ? h("span", {}, h("b", {}, "Neden zorunlu? "), "Space'in kodu bu alan için boş değer tanımlamamış; uygulama da Space'in bunu nasıl söylediğine bakarak 'Zorunlu' yazıyor. Gerçekte bazı Space'ler görselsiz de çalışır. Denemek için boş bırakıp 'Yine de çalıştır'a basabilirsiniz; olmazsa Space hata verir ve süre çok az harcanır." + (r.epCount > 1 ? " Üstteki 'İşlev' listesinde yalnızca metin isteyen başka bir işlev de olabilir." : "")) : h("span", {}, h("b", {}, "İsteğe bağlı: "), "yüklemeden de çalıştırabilirsiniz; bu durumda Space dosya olmadan ya da kendi örneğiyle çalışır.")));
     tipParts.push(h("p", { class: "small" }, "Gizlilik: dosya yalnızca bu Space'in sunucusuna gönderilir. Kişisel fotoğraflarda bunu göz önünde bulundurun."));
   } else {
     if (known?.what) tipParts.push(h("p", {}, h("b", {}, "Ne işe yarar? "), known.what));
@@ -1471,7 +1595,7 @@ async function run() {
     r.armed = true;
     $("#runLabel").textContent = "Yine de çalıştır";
     setStatus("warn", "Doldurulması gereken alanlar: " + missing.map((f) => f.label).join(", ") + ".", null);
-    $("#rStatus").append(h("span", { class: "why" }, "Bu alanlar boş kalırsa Space büyük olasılıkla hata verir ve süre boşa gider. Alanı doldurun ya da denemek için 'Yine de çalıştır'a basın."));
+    $("#rStatus").append(h("span", { class: "why" }, "Space bu alanlar için boş değer tanımlamamış; boş kalırsa büyük olasılıkla hata verir. Alanı doldurun ya da denemek için 'Yine de çalıştır'a basın." + (missing.some((f) => f.file) && r.epCount > 1 ? " Görsel eklemek istemiyorsanız üstteki 'İşlev' listesinden yalnızca metin isteyen bir işlev seçmeyi deneyin." : "") + " Bir alanın neden istendiğini yanındaki (i) düğmesi anlatır."));
     missing[0].el.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
@@ -1723,8 +1847,11 @@ $("#clearToken").addEventListener("click", () => { store.del("token"); $("#token
 $("#optZero").checked = settings.zeroOnly;
 $("#optHideErr").checked = settings.hideErr;
 $("#optOnboard").checked = settings.onboard;
-$("#optZero").addEventListener("change", (e) => { settings.zeroOnly = e.target.checked; store.set("settings", settings); });
-$("#optHideErr").addEventListener("change", (e) => { settings.hideErr = e.target.checked; store.set("settings", settings); });
+$("#optFree").checked = settings.freeOnly && !settings.zeroOnly;
+// İki filtre birbirini dışlar: biri açılınca diğeri kapanır
+$("#optZero").addEventListener("change", (e) => { settings.zeroOnly = e.target.checked; if (settings.zeroOnly) { settings.freeOnly = false; $("#optFree").checked = false; } store.set("settings", settings); listDirty = true; });
+$("#optFree").addEventListener("change", (e) => { settings.freeOnly = e.target.checked; if (settings.freeOnly) { settings.zeroOnly = false; $("#optZero").checked = false; } store.set("settings", settings); listDirty = true; });
+$("#optHideErr").addEventListener("change", (e) => { settings.hideErr = e.target.checked; store.set("settings", settings); listDirty = true; });
 $("#optOnboard").addEventListener("change", (e) => { settings.onboard = e.target.checked; store.set("settings", settings); renderOnboard(); });
 $("#clearCache").addEventListener("click", () => { for (const k of Object.keys(SORTS)) { store.del("pool:" + k); delete mem[k]; } toast("Listeler yeniden yükleniyor"); show("discover"); renderDiscover(true); });
 $("#closeRunner").addEventListener("click", closeRunner);
