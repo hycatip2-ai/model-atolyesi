@@ -316,6 +316,13 @@ details.adv .field { background: var(--bg); }
 .quota b { font: 600 19px var(--font-mono); }
 .quota span { font-size: 12px; color: var(--muted); }
 .quota .me { border-color: var(--heat); background: var(--heat-soft); }
+.qlive { display: grid; gap: 8px; padding: 14px; border-radius: var(--r-md); background: var(--sunken); }
+.qlive .big { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.qlive .big b { font: 600 24px var(--font-mono); }
+.qlive .bar { height: 10px; }
+.qlive .bar i { background: var(--ok); }
+.qlive.low .bar i { background: var(--heat); }
+.qlive.out .bar i { background: var(--danger); }
 .howto { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
 .setrow { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
 .setrow .lt { display: grid; gap: 2px; }
@@ -453,7 +460,7 @@ details.adv .field { background: var(--bg); }
         <div data-tier="free"><b>5 dk</b><span>Ücretsiz hesap</span></div>
         <div data-tier="pro"><b>40 dk</b><span>PRO · $9/ay</span></div>
       </div>
-      <p class="small muted" id="lastQuota">Kalan süre doğrudan okunamıyor. Bir hata mesajında görünürse burada gösterilir.</p>
+      <div id="quotaLive"></div>
       <a class="btn" href="https://huggingface.co/settings/billing" target="_blank" rel="noopener">Gerçek kullanımı Hugging Face'te gör</a>
     </div>
 
@@ -1002,8 +1009,73 @@ function renderAccount() {
   $("#acctQuota").textContent = account ? (account.isPro ? "PRO · günde 40 dk" : "günde 5 dk") : token() ? "kontrol edilmedi" : "günde 2 dk";
   const tier = account ? (account.isPro ? "pro" : "free") : "anon";
   document.querySelectorAll("#quotaGrid div").forEach((d) => d.classList.toggle("me", d.dataset.tier === tier));
-  const lq = store.get("lastQuota", null);
-  if (lq && Date.now() - lq.ts < 86400000) $("#lastQuota").textContent = `Son bilinen kalan süre: ${lq.left} sn (saat ${new Date(lq.ts).toLocaleTimeString("tr-TR", { timeStyle: "short" })} itibarıyla).`;
+  renderQuota();
+}
+// Kalan ZeroGPU kotası: Hugging Face yalnızca token ile söylüyor (huggingface_hub get_zero_gpu_quota ile aynı adres)
+let quota = store.get("quota", null), quotaBusy = false, quotaErr = "";
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m ? m + " dk" + (s ? " " + s + " sn" : "") : s + " sn";
+}
+// Sıfırlanma zamanı geçtiyse kota dolmuş sayılır
+function quotaNow() {
+  if (!quota) return null;
+  const reset = quota.resetsAt ? Date.parse(quota.resetsAt) : null;
+  return reset && reset <= Date.now() ? { ...quota, left: quota.base, resetsAt: null, used: 0 } : { ...quota, used: Math.max(0, quota.base - quota.left) };
+}
+async function loadQuota() {
+  const tk = token();
+  if (!tk || quotaBusy) { renderQuota(); return; }
+  quotaBusy = true;
+  renderQuota();
+  try {
+    const res = await fetch(API + "/spaces/zero-gpu/quota", { headers: { Authorization: "Bearer " + tk } });
+    if (!res.ok) throw new Error(res.status === 401 ? "Token geçersiz; Hesap bölümünden kontrol edin." : "Kota okunamadı (hata kodu " + res.status + ").");
+    const j = await res.json();
+    quota = { base: Number(j.base) || 0, left: Number(j.current ?? j.remaining) || 0, resetsAt: j.resetsAt || null, over: j.overquotaUsed ?? null, ts: Date.now() };
+    store.set("quota", quota);
+    quotaErr = "";
+  } catch (e) { quotaErr = String(e.message || e).replace(/^TypeError: /, ""); }
+  quotaBusy = false;
+  renderQuota();
+}
+function quotaShort() {
+  const q = quotaNow();
+  return q && token() ? fmtDur(q.left) + " kaldı" : null;
+}
+function renderQuota() {
+  const box = $("#quotaLive");
+  if (!box) return;
+  const short = quotaShort();
+  if (short) $("#acctQuota").textContent = short;
+  const refresh = h("button", { class: "btn sm", type: "button", disabled: quotaBusy ? true : null, onclick: () => loadQuota() }, quotaBusy ? "Okunuyor…" : "Yenile");
+  if (!token()) {
+    const lq = store.get("lastQuota", null);
+    box.replaceChildren(h("div", { class: "qlive" },
+      h("b", {}, "Kalan sürenizi görmek için token ekleyin"),
+      h("span", { class: "small muted" }, "Hugging Face kalan süreyi yalnızca giriş yapmış hesaplara söylüyor. Yukarıdaki bölümden ücretsiz token eklerseniz kalan süreniz burada ve sağ üstte görünür; kotanız da 2 dakikadan 5 dakikaya çıkar."),
+      lq && Date.now() - lq.ts < 86400000 ? h("span", { class: "small" }, `Son bilinen kalan süre: ${lq.left} sn (saat ${new Date(lq.ts).toLocaleTimeString("tr-TR", { timeStyle: "short" })} itibarıyla, bir hata mesajından).`) : null));
+    return;
+  }
+  const q = quotaNow();
+  if (!q) {
+    box.replaceChildren(h("div", { class: "qlive" }, h("span", { class: "small" }, quotaErr || (quotaBusy ? "Kalan süre okunuyor…" : "Kalan süre henüz okunmadı.")), h("div", { class: "row" }, refresh)));
+    return;
+  }
+  const pct = q.base ? q.left / q.base : 0;
+  const reset = q.resetsAt ? new Date(q.resetsAt) : null;
+  const inMin = reset ? Math.max(0, Math.round((reset - Date.now()) / 60000)) : 0;
+  box.replaceChildren(h("div", { class: "qlive" + (q.left <= 0 ? " out" : pct < 0.25 ? " low" : "") },
+    h("div", { class: "big" }, h("span", {}, h("b", {}, fmtDur(q.left)), " kaldı"), h("span", { class: "small muted" }, "toplam " + fmtDur(q.base))),
+    h("div", { class: "bar", role: "img", "aria-label": `Kotanın yüzde ${Math.round(pct * 100)}'i kaldı` }, h("i", { style: `width:${Math.max(0, Math.min(100, pct * 100))}%` })),
+    h("span", { class: "small" }, "Kullanılan: " + fmtDur(q.used)),
+    h("span", { class: "small" }, reset
+      ? `Sıfırlanma: ${reset.toLocaleString("tr-TR", { weekday: "long", hour: "2-digit", minute: "2-digit" })} (${inMin >= 60 ? Math.floor(inMin / 60) + " sa " : ""}${inMin % 60} dk sonra)`
+      : "Bugün henüz kullanılmadı. İlk kullanımdan 24 saat sonra sıfırlanır."),
+    q.over ? h("span", { class: "small" }, "Kota bittikten sonra ek (ücretli) kullanım: " + fmtDur(q.over)) : null,
+    q.left <= 0 ? h("span", { class: "small" }, h("b", {}, "Kotanız bitti. "), "Bu arada kota harcamayan CPU Space'lerini deneyebilirsiniz (Hesap → Liste ayarları → Sadece kota harcamayanlar).") : null,
+    h("div", { class: "row", style: "justify-content:space-between" }, h("span", { class: "small muted" }, quotaErr || "Güncellendi: saat " + new Date(q.ts).toLocaleTimeString("tr-TR", { timeStyle: "short" })), refresh)));
 }
 async function checkToken() {
   const tk = token();
@@ -1022,6 +1094,7 @@ async function checkToken() {
   }
   renderAccount();
   renderTokenNotice();
+  if (account) loadQuota();
 }
 
 /* =========================================================
@@ -1037,7 +1110,7 @@ function show(view) {
   if (view === "favs") renderFavs();
   if (view === "history") renderHistory();
   if (view === "guide") renderGuide();
-  if (view === "settings") { $("#tokenInput").value = token(); renderAccount(); }
+  if (view === "settings") { $("#tokenInput").value = token(); renderAccount(); if (token() && (!quota || Date.now() - quota.ts > 30000)) loadQuota(); }
   window.scrollTo(0, 0);
 }
 
@@ -1373,14 +1446,18 @@ function buildForm([epKey, ep], prefill) {
       h("div", { class: "form" }, adv)));
   }
   if (!main.length && !adv.length) form.append(h("div", { class: "empty" }, "Bu işlev hiçbir girdi istemiyor; doğrudan çalıştırabilirsiniz."));
-  const anyZero = isZero(r.space || {});
-  $("#runHint").textContent = anyZero ? "ZeroGPU: bu işlem günlük GPU kotanızdan süre harcar." : "Bu Space kotanızı harcamaz; ama daha yavaş olabilir.";
+  updateRunHint();
   $("#runLabel").textContent = "Çalıştır";
   $("#runbar").hidden = false;
   $("#runBtn").disabled = false;
   $("#rOutWrap").hidden = true;
 }
 
+function updateRunHint() {
+  if (!r.space) return;
+  const short = quotaShort();
+  $("#runHint").textContent = isZero(r.space) ? "ZeroGPU: bu işlem günlük GPU kotanızdan süre harcar." + (short ? " Kalan: " + short.replace(" kaldı", "") + "." : "") : "Bu Space kotanızı harcamaz; ama daha yavaş olabilir.";
+}
 function enumOf(t) { return Array.isArray(t?.enum) ? t.enum : Array.isArray(t?.items?.enum) ? t.items.enum : null; }
 function choicesOf(props) {
   if (!Array.isArray(props?.choices)) return null;
@@ -1646,10 +1723,11 @@ async function run() {
   $("#runLabel").textContent = "Tekrar çalıştır";
   if (r.space !== space) return;
   const secs = Math.round((Date.now() - r.started) / 1000);
-  if (failed && !last) { setStatus("error", friendlyError(failed)); return; }
+  if (failed && !last) { setStatus("error", friendlyError(failed)); if (isZero(space) && token()) loadQuota().then(updateRunHint); return; }
   if (failed) setStatus("partial", friendlyError(failed));
   else setStatus("done", `Toplam ${secs} saniye sürdü.`);
   saveRun(space, payload, last, secs);
+  if (isZero(space) && token()) setTimeout(() => loadQuota().then(updateRunHint), 2000);
 }
 function cancelRun() { if (r.job) { try { r.job.cancel(); } catch {} } toast("Durduruldu"); }
 function saveRun(space, payload, data, secs) {
@@ -1806,7 +1884,7 @@ mountInfo("#tokHelp", "#tokHelpTip", [
 mountInfo("#quotaHelp", "#quotaHelpTip", [
   h("p", {}, "ZeroGPU Space'leri her çalıştırmada GPU süresi harcar. Bu süre her gün sınırlıdır; sizin hesap türünüz turuncu çerçeveyle işaretli."),
   h("p", {}, h("b", {}, "Ne zaman sıfırlanır? "), "İlk kullanımınızdan tam 24 saat sonra; gece yarısı değil."),
-  h("p", {}, h("b", {}, "Kalan süremi neden göremiyorum? "), "Hugging Face kalan süreyi dışarıya açık olarak vermiyor. Bir hata mesajında görünürse uygulama kaydeder. Gerçek kullanım için alttaki düğmeyle Hugging Face'in fatura sayfasına bakabilirsiniz."),
+  h("p", {}, h("b", {}, "Kalan süremi nasıl görürüm? "), "Token eklediyseniz kalan süreniz, sıfırlanma saati ve kullandığınız süre aşağıda görünür; her ZeroGPU çalıştırmasından sonra kendiliğinden yenilenir. Hugging Face bu bilgiyi girişsiz kullanıcılara vermiyor."),
 ], "Kota açıklaması");
 mountInfo("#outHelp", "#outHelpTip", [
   h("p", {}, "Sonuçlar Space'in sunucusunda geçici olarak tutulur ve bir süre sonra silinebilir."),
@@ -1843,7 +1921,7 @@ $("#saveToken").addEventListener("click", () => {
   if (v && !v.startsWith("hf_")) { $("#tokenStatus").textContent = "Token 'hf_' ile başlamalı. Hugging Face'ten kopyaladığınız kodun tamamını yapıştırın."; return; }
   store.set("token", v); r.app = null; checkToken();
 });
-$("#clearToken").addEventListener("click", () => { store.del("token"); $("#tokenInput").value = ""; account = null; store.del("account"); store.del("noTokenHide"); $("#tokenStatus").textContent = "Token silindi. Girişsiz kota: günde 2 dakika."; renderAccount(); renderTokenNotice(); });
+$("#clearToken").addEventListener("click", () => { quota = null; store.del("quota"); store.del("token"); $("#tokenInput").value = ""; account = null; store.del("account"); store.del("noTokenHide"); $("#tokenStatus").textContent = "Token silindi. Girişsiz kota: günde 2 dakika."; renderAccount(); renderTokenNotice(); });
 $("#optZero").checked = settings.zeroOnly;
 $("#optHideErr").checked = settings.hideErr;
 $("#optOnboard").checked = settings.onboard;
@@ -1855,6 +1933,27 @@ $("#optHideErr").addEventListener("change", (e) => { settings.hideErr = e.target
 $("#optOnboard").addEventListener("change", (e) => { settings.onboard = e.target.checked; store.set("settings", settings); renderOnboard(); });
 $("#clearCache").addEventListener("click", () => { for (const k of Object.keys(SORTS)) { store.del("pool:" + k); delete mem[k]; } toast("Listeler yeniden yükleniyor"); show("discover"); renderDiscover(true); });
 $("#closeRunner").addEventListener("click", closeRunner);
+
+// Android'de geri hareketi (kenardan kaydırma) uygulamayı kapatmasın.
+// Geçmişe bir "bekçi" kayıt eklenir; geri gelince önce açık pencere kapanır,
+// sonra Keşfet'e dönülür. Uygulamadan çıkmak için 2 sn içinde iki kez geri gerekir.
+let backAt = 0;
+const armBack = () => { if (!history.state?.guard) history.pushState({ guard: true }, ""); };
+addEventListener("popstate", () => {
+  const twice = Date.now() - backAt < 2000;
+  if (!$("#installHint").hidden) $("#installHint").hidden = true;
+  else if (!$("#runner").hidden) {
+    if (r.job && !twice) { backAt = Date.now(); toast("Üretim sürüyor. Durdurup çıkmak için bir kez daha geri kaydırın."); }
+    else { backAt = 0; closeRunner(); }
+  } else if (state.view !== "discover") show("discover");
+  else if (twice) { history.back(); return; }
+  else { backAt = Date.now(); toast("Çıkmak için bir kez daha geri kaydırın"); }
+  armBack();
+});
+// Chrome, dokunulmadan eklenen geçmiş kayıtlarını atlayabildiği için ilk dokunuşta da kurulur
+history.replaceState({ base: true }, "");
+armBack();
+addEventListener("pointerdown", armBack, { capture: true, passive: true });
 $("#rStar").addEventListener("click", () => { if (r.space) { toggleFav(r.space); $("#rStar").setAttribute("aria-pressed", String(isFav(r.space.id))); } });
 $("#runBtn").addEventListener("click", run);
 $("#cancelBtn").addEventListener("click", cancelRun);
@@ -1872,6 +1971,7 @@ renderTokenNotice();
 renderAccount();
 renderDiscover();
 if (token()) checkToken();
+renderQuota();
 loadGradio().catch(() => {});
 // Uygulama olarak kurulabilmesi ve hızlı açılması için
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {});
