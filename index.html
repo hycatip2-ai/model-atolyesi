@@ -316,13 +316,28 @@ details.adv .field { background: var(--bg); }
 .quota b { font: 600 19px var(--font-mono); }
 .quota span { font-size: 12px; color: var(--muted); }
 .quota .me { border-color: var(--heat); background: var(--heat-soft); }
-.qlive { display: grid; gap: 8px; padding: 14px; border-radius: var(--r-md); background: var(--sunken); }
-.qlive .big { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.qlive .big b { font: 600 24px var(--font-mono); }
-.qlive .bar { height: 10px; }
-.qlive .bar i { background: var(--ok); }
-.qlive.low .bar i { background: var(--heat); }
-.qlive.out .bar i { background: var(--danger); }
+.qlive { display: grid; gap: 12px; padding: 18px 14px 14px; border-radius: var(--r-lg); background: var(--sunken); justify-items: stretch; }
+.gauge { display: grid; justify-items: center; --g: var(--ok); }
+.gauge.mid { --g: var(--accent); }
+.gauge.low { --g: var(--heat); }
+.gauge.out, .gauge.none { --g: var(--danger); }
+.g-ring { position: relative; width: min(220px, 70vw); aspect-ratio: 1; margin-bottom: -12%; }
+.g-ring svg { width: 100%; height: 100%; overflow: visible; }
+.g-track, .g-fill { fill: none; stroke-width: 10; stroke-linecap: round; }
+.g-track { stroke: var(--line); }
+.g-fill { stroke: var(--g); transition: stroke-dasharray 1.2s cubic-bezier(.22,1,.36,1), opacity .3s; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--g) 45%, transparent)); }
+.g-fill.empty, .gauge.none .g-fill { opacity: 0; }
+.g-mid { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 2px; padding-top: 6px; }
+.g-num { font: 600 clamp(34px, 11vw, 46px)/1 var(--font-mono); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.gauge.out .g-num, .gauge.none .g-num { color: var(--muted); }
+.g-mid span { font-size: 13px; color: var(--muted); }
+.gauge.busy .g-track { animation: gpulse 1.2s ease-in-out infinite; }
+@keyframes gpulse { 50% { stroke: var(--line-strong); } }
+.g-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.g-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px 6px 9px; }
+.g-chip svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.g-refresh.spin svg { animation: gspin 1s linear infinite; }
+@keyframes gspin { to { transform: rotate(360deg); } }
 .howto { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
 .setrow { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
 .setrow .lt { display: grid; gap: 2px; }
@@ -438,16 +453,18 @@ details.adv .field { background: var(--bg); }
       </div>
       <p class="small muted" id="tokenStatus">Token yalnızca bu telefondaki tarayıcıda saklanır; başka hiçbir yere gönderilmez, sadece Hugging Face'e bağlanırken kullanılır.</p>
       <details class="adv" style="background:var(--bg)">
-        <summary>Token nasıl alınır?<small>5 adımda, yaklaşık 1 dakika</small><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
+        <summary>Token nasıl alınır?<small>7 adımda, yaklaşık 1 dakika</small><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
         <div style="padding:0 16px 16px;display:grid;gap:10px">
           <ol class="howto">
             <li>huggingface.co'da hesabınıza giriş yapın.</li>
             <li>Sağ üstteki profil resminize dokunup <b>Settings</b> → <b>Access Tokens</b> bölümüne girin.</li>
             <li><b>Create new token</b> düğmesine basın.</li>
-            <li>Token type olarak <b>Read</b> seçin, bir ad verin (ör. "atolye") ve oluşturun.</li>
+            <li>Token type olarak <b>Fine-grained</b> seçin ve bir ad verin (ör. "atolye").</li>
+            <li><b>Billing</b> başlığı altında <b>Read billing usage and payment method status</b> kutusunu işaretleyin. Bu izin kalan kotanızı görmek için gerekli. Başka bir şey işaretlemeniz gerekmez.</li>
+            <li>En alttaki <b>Create token</b>'a basın.</li>
             <li>Çıkan <span class="mono">hf_</span> ile başlayan kodu kopyalayıp yukarıya yapıştırın.</li>
           </ol>
-          <a class="btn sm" href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">Token sayfasını aç</a>
+          <a class="btn sm" href="https://huggingface.co/settings/tokens/new?tokenType=fineGrained" target="_blank" rel="noopener">Token sayfasını aç</a>
         </div>
       </details>
     </div>
@@ -1031,7 +1048,7 @@ async function loadQuota() {
   renderQuota();
   try {
     const res = await fetch(API + "/spaces/zero-gpu/quota", { headers: { Authorization: "Bearer " + tk } });
-    if (!res.ok) throw new Error(res.status === 401 ? "Token geçersiz; Hesap bölümünden kontrol edin." : "Kota okunamadı (hata kodu " + res.status + ").");
+    if (!res.ok) throw new Error(res.status === 401 ? "Token geçersiz; Hesap bölümünden kontrol edin." : res.status === 403 ? "403: token'ın kotayı okuma izni yok." : "Kota okunamadı (hata kodu " + res.status + ").");
     const j = await res.json();
     quota = { base: Number(j.base) || 0, left: Number(j.current ?? j.remaining) || 0, resetsAt: j.resetsAt || null, over: j.overquotaUsed ?? null, ts: Date.now() };
     store.set("quota", quota);
@@ -1044,38 +1061,92 @@ function quotaShort() {
   const q = quotaNow();
   return q && token() ? fmtDur(q.left) + " kaldı" : null;
 }
+// Halka gösterge: 270 derecelik yay, kalan oran kadar dolar; sayı sıfırdan sayarak gelir
+const ARC = "M 24.64 95.36 A 50 50 0 1 1 95.36 95.36";
+let gaugeShown = null, gaugeTimer = null;
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+function clock(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
+function resetText(q) {
+  if (!q.resetsAt) return "Bugün henüz kullanmadınız";
+  const min = Math.max(0, Math.round((Date.parse(q.resetsAt) - Date.now()) / 60000));
+  return (min >= 60 ? Math.floor(min / 60) + " sa " : "") + (min % 60) + " dk sonra dolacak";
+}
+function gauge({ pct, level, center, sub, note }) {
+  const NS = "http://www.w3.org/2000/svg";
+  const ring = document.createElementNS(NS, "svg");
+  ring.setAttribute("viewBox", "0 0 120 120");
+  ring.setAttribute("aria-hidden", "true");
+  const arc = (cls) => { const p = document.createElementNS(NS, "path"); p.setAttribute("d", ARC); p.setAttribute("class", cls); p.setAttribute("pathLength", "100"); return p; };
+  const fill = arc("g-fill");
+  fill.setAttribute("stroke-dasharray", "0 200");
+  ring.append(arc("g-track"), fill);
+  const num = h("b", { class: "g-num" }, center);
+  const el = h("div", { class: "gauge " + level, role: "img", "aria-label": note }, h("div", { class: "g-ring" }, ring, h("div", { class: "g-mid" }, num, h("span", {}, sub))));
+  return { el, fillSel: () => fill, num, pct };
+}
+function setFill(g) {
+  const v = Math.max(0, Math.min(1, g.pct)) * 100;
+  const fill = g.fillSel();
+  fill.setAttribute("stroke-dasharray", v + " 200");
+  fill.classList.toggle("empty", v < 0.5);
+}
+function animateGauge(g, from, to, fmt) {
+  if (reduceMotion()) { setFill(g); g.num.textContent = fmt(to); return; }
+  requestAnimationFrame(() => requestAnimationFrame(() => setFill(g)));
+  const t0 = performance.now(), dur = 1200;
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    g.num.textContent = fmt(from + (to - from) * e);
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 function renderQuota() {
   const box = $("#quotaLive");
   if (!box) return;
   const short = quotaShort();
   if (short) $("#acctQuota").textContent = short;
-  const refresh = h("button", { class: "btn sm", type: "button", disabled: quotaBusy ? true : null, onclick: () => loadQuota() }, quotaBusy ? "Okunuyor…" : "Yenile");
-  if (!token()) {
-    const lq = store.get("lastQuota", null);
-    box.replaceChildren(h("div", { class: "qlive" },
-      h("b", {}, "Kalan sürenizi görmek için token ekleyin"),
-      h("span", { class: "small muted" }, "Hugging Face kalan süreyi yalnızca giriş yapmış hesaplara söylüyor. Yukarıdaki bölümden ücretsiz token eklerseniz kalan süreniz burada ve sağ üstte görünür; kotanız da 2 dakikadan 5 dakikaya çıkar."),
-      lq && Date.now() - lq.ts < 86400000 ? h("span", { class: "small" }, `Son bilinen kalan süre: ${lq.left} sn (saat ${new Date(lq.ts).toLocaleTimeString("tr-TR", { timeStyle: "short" })} itibarıyla, bir hata mesajından).`) : null));
-    return;
-  }
-  const q = quotaNow();
+  const refresh = h("button", { class: "iconbtn g-refresh" + (quotaBusy ? " spin" : ""), type: "button", "aria-label": "Kotayı yenile", disabled: quotaBusy ? true : null, onclick: () => { gaugeShown = null; loadQuota(); } },
+    svg('<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/>'));
+  const q = token() ? quotaNow() : null;
+  clearInterval(gaugeTimer);
   if (!q) {
-    box.replaceChildren(h("div", { class: "qlive" }, h("span", { class: "small" }, quotaErr || (quotaBusy ? "Kalan süre okunuyor…" : "Kalan süre henüz okunmadı.")), h("div", { class: "row" }, refresh)));
+    // Henüz okunamadı: boş gösterge ve ne yapılacağı
+    const g = gauge({ pct: 0, level: "none", center: "?", sub: "kalan süre", note: "Kalan süre bilinmiyor" });
+    const forbidden = /403/.test(quotaErr);
+    const lq = store.get("lastQuota", null);
+    box.replaceChildren(h("div", { class: "qlive" }, g.el,
+      !token() ? h("p", { class: "small", style: "text-align:center" }, h("b", {}, "Kalan sürenizi görmek için token ekleyin. "), "Hugging Face bu bilgiyi yalnızca giriş yapmış hesaplara veriyor. Token'ı yukarıdaki 'Token nasıl alınır?' adımlarıyla oluşturun.")
+      : forbidden ? h("div", { class: "small", style: "display:grid;gap:6px" },
+          h("b", {}, "Token'ınızın kotayı okuma izni yok."),
+          h("span", {}, "Hugging Face kalan süreyi yalnızca 'fatura okuma' izni olan token'a söylüyor. 'Read' tipindeki token'lara bu izin eklenemiyor; yeni bir token gerekiyor:"),
+          h("ol", { class: "howto" },
+            h("li", {}, "Aşağıdaki düğmeyle token sayfasını açıp ", h("b", {}, "Create new token"), "'a basın."),
+            h("li", {}, "Token type olarak ", h("b", {}, "Fine-grained"), " seçin, bir ad verin."),
+            h("li", {}, h("b", {}, "Billing"), " başlığı altında ", h("b", {}, "Read billing usage and payment method status"), " kutusunu işaretleyin."),
+            h("li", {}, "En alttaki ", h("b", {}, "Create token"), "'a basın, kodu kopyalayıp yukarıdaki kutuya yapıştırın ve ", h("b", {}, "Kaydet"), "'e basın.")),
+          h("a", { class: "btn sm", href: "https://huggingface.co/settings/tokens/new?tokenType=fineGrained", target: "_blank", rel: "noopener" }, "Yeni token oluştur"))
+      : h("p", { class: "small", style: "text-align:center" }, quotaErr || (quotaBusy ? "Kalan süre okunuyor…" : "Kalan süre henüz okunmadı.")),
+      lq && Date.now() - lq.ts < 86400000 ? h("p", { class: "small muted", style: "text-align:center" }, `Son bilinen: ${lq.left} sn kalmıştı (saat ${new Date(lq.ts).toLocaleTimeString("tr-TR", { timeStyle: "short" })}, bir hata mesajından).`) : null,
+      token() ? h("div", { class: "g-foot" }, h("span", {}), refresh) : null));
+    if (quotaBusy) g.el.classList.add("busy");
     return;
   }
   const pct = q.base ? q.left / q.base : 0;
-  const reset = q.resetsAt ? new Date(q.resetsAt) : null;
-  const inMin = reset ? Math.max(0, Math.round((reset - Date.now()) / 60000)) : 0;
-  box.replaceChildren(h("div", { class: "qlive" + (q.left <= 0 ? " out" : pct < 0.25 ? " low" : "") },
-    h("div", { class: "big" }, h("span", {}, h("b", {}, fmtDur(q.left)), " kaldı"), h("span", { class: "small muted" }, "toplam " + fmtDur(q.base))),
-    h("div", { class: "bar", role: "img", "aria-label": `Kotanın yüzde ${Math.round(pct * 100)}'i kaldı` }, h("i", { style: `width:${Math.max(0, Math.min(100, pct * 100))}%` })),
-    h("span", { class: "small" }, "Kullanılan: " + fmtDur(q.used)),
-    h("span", { class: "small" }, reset
-      ? `Sıfırlanma: ${reset.toLocaleString("tr-TR", { weekday: "long", hour: "2-digit", minute: "2-digit" })} (${inMin >= 60 ? Math.floor(inMin / 60) + " sa " : ""}${inMin % 60} dk sonra)`
-      : "Bugün henüz kullanılmadı. İlk kullanımdan 24 saat sonra sıfırlanır."),
-    q.over ? h("span", { class: "small" }, "Kota bittikten sonra ek (ücretli) kullanım: " + fmtDur(q.over)) : null,
-    q.left <= 0 ? h("span", { class: "small" }, h("b", {}, "Kotanız bitti. "), "Bu arada kota harcamayan CPU Space'lerini deneyebilirsiniz (Hesap → Liste ayarları → Sadece kota harcamayanlar).") : null,
-    h("div", { class: "row", style: "justify-content:space-between" }, h("span", { class: "small muted" }, quotaErr || "Güncellendi: saat " + new Date(q.ts).toLocaleTimeString("tr-TR", { timeStyle: "short" })), refresh)));
+  const level = q.left <= 0 ? "out" : pct < 0.25 ? "low" : pct < 0.5 ? "mid" : "ok";
+  const g = gauge({ pct, level, center: clock(q.left), sub: q.left <= 0 ? "kota bitti" : "kaldı · " + fmtDur(q.base) + "'dan", note: `${fmtDur(q.left)} kaldı, toplam ${fmtDur(q.base)}` });
+  const reset = h("span", { class: "g-chip" }, svg('<path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/>'), h("span", {}, resetText(q)));
+  box.replaceChildren(h("div", { class: "qlive" }, g.el,
+    h("div", { class: "g-foot" }, reset, refresh),
+    q.left <= 0 ? h("p", { class: "small", style: "text-align:center" }, "Dolana kadar kota harcamayan Space'leri deneyebilirsiniz: Liste ayarları → Sadece kota harcamayanlar.") : null,
+    q.over ? h("p", { class: "small muted", style: "text-align:center" }, "Ek (ücretli) kullanım: " + fmtDur(q.over)) : null,
+    quotaErr ? h("p", { class: "small muted", style: "text-align:center" }, quotaErr) : null));
+  // Aynı değer tekrar çizilirken baştan saymasın
+  const from = gaugeShown == null ? 0 : gaugeShown;
+  if (gaugeShown === q.left) { g.fillSel().style.transition = "none"; setFill(g); g.num.textContent = clock(q.left); }
+  else animateGauge(g, from, q.left, clock);
+  gaugeShown = q.left;
+  gaugeTimer = setInterval(() => { if (document.contains(reset)) reset.lastChild.textContent = resetText(quotaNow() || q); }, 30000);
 }
 async function checkToken() {
   const tk = token();
@@ -1110,7 +1181,7 @@ function show(view) {
   if (view === "favs") renderFavs();
   if (view === "history") renderHistory();
   if (view === "guide") renderGuide();
-  if (view === "settings") { $("#tokenInput").value = token(); renderAccount(); if (token() && (!quota || Date.now() - quota.ts > 30000)) loadQuota(); }
+  if (view === "settings") { gaugeShown = null; $("#tokenInput").value = token(); renderAccount(); if (token() && (!quota || Date.now() - quota.ts > 30000)) loadQuota(); }
   window.scrollTo(0, 0);
 }
 
